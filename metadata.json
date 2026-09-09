@@ -1,0 +1,8 @@
+{
+  "name": "Heritage Storyteller AI",
+  "description": "An expert storyteller guide on Indian historical monuments, providing structured historical narratives, architectural insights, audio narration, and local browser bookmarking of favorite stories grounded in monument knowledge files.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
