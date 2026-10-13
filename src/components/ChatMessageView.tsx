@@ -97,7 +97,7 @@ export const ChatMessageView: React.FC<ChatMessageViewProps> = ({
 
           {/* Action buttons */}
           <div className="flex items-center gap-2">
-            {/* Requirement 2 & 4: Speaker button 🔊 for voice output */}
+            {/* Voice Assistant Speaker button 🔊 for voice output */}
             <button
               type="button"
               id={`speaker-btn-${message.id}`}
@@ -108,13 +108,13 @@ export const ChatMessageView: React.FC<ChatMessageViewProps> = ({
                   onSpeak(message.content);
                 }
               }}
-              className={`min-h-[44px] px-3 py-2 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-all shadow-2xs select-none ${
+              className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs select-none cursor-pointer ${
                 isSpeakingThis
                   ? 'bg-amber-800 text-white border-amber-900 ring-2 ring-amber-400/60 animate-pulse'
-                  : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
               }`}
-              title={isSpeakingThis ? 'Stop speaking narration' : 'Read aloud with audio tour guide voice'}
-              aria-label={isSpeakingThis ? 'Stop speaking this response' : 'Read this response aloud'}
+              title={isSpeakingThis ? 'Stop voice narration' : 'Narrate story & facts with voice assistant (en-IN)'}
+              aria-label={isSpeakingThis ? 'Stop voice narration' : 'Narrate with voice assistant'}
             >
               {isSpeakingThis ? (
                 <>
@@ -124,7 +124,13 @@ export const ChatMessageView: React.FC<ChatMessageViewProps> = ({
               ) : (
                 <>
                   <Volume2 className="w-4 h-4 text-amber-800" />
-                  <span>Read Aloud</span>
+                  <span>
+                    {message.mode === 'facts'
+                      ? 'Narrate Facts'
+                      : message.mode === 'guide'
+                      ? 'Narrate Tour'
+                      : 'Narrate Story'}
+                  </span>
                 </>
               )}
             </button>

@@ -15,7 +15,6 @@ import { DEFAULT_MONUMENT_KNOWLEDGE } from './data/defaultKnowledge';
 import { MonumentKnowledgeDoc, ChatMessage, StoryMode, BookmarkItem } from './types';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
-import { VoiceStatusBar } from './components/VoiceStatusBar';
 import {
   getStoredBookmarks,
   saveBookmarkToStorage,
@@ -76,38 +75,57 @@ export default function App() {
   const [isBookmarksModalOpen, setIsBookmarksModalOpen] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>(() => getStoredBookmarks());
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [speakingTitle, setSpeakingTitle] = useState<string>('');
+
+  // Voice Assistant: Auto-narrate responses (persisted in local storage)
+  const [autoNarrate, setAutoNarrate] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('heritage_auto_narrate');
+      return stored !== null ? stored === 'true' : true;
+    }
+    return true;
+  });
+
+  const handleToggleAutoNarrate = () => {
+    setAutoNarrate((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('heritage_auto_narrate', String(next));
+      }
+      if (!next && isSpeaking) {
+        handleStopSpeaking();
+      }
+      return next;
+    });
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { isSpeaking, isPaused, speak, pause, resume, stop } = useSpeechSynthesis();
 
-  // Requirement 3: Auto-Speak Mode (persisted in local storage)
-  const [autoSpeak, setAutoSpeak] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('heritage_auto_speak');
-      return stored === 'true';
-    }
-    return false;
+  const {
+    isListening,
+    errorMessage: speechError,
+    toggleListening,
+    stopListening,
+    clearError: clearSpeechError,
+  } = useSpeechRecognition({
+    lang: 'en-IN',
+    onResult: (spokenText) => {
+      setInput(spokenText);
+    },
   });
 
-  const handleToggleAutoSpeak = () => {
-    setAutoSpeak((prev) => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('heritage_auto_speak', String(next));
-      }
-      return next;
-    });
-  };
-
-  const handleSpeakMessage = (msgId: string, content: string) => {
+  const handleSpeakMessage = (msgId: string, content: string, title?: string) => {
     setSpeakingMessageId(msgId);
+    setSpeakingTitle(title || selectedMonument?.name || 'Heritage Story & Facts');
     speak(content);
   };
 
   const handleStopSpeaking = () => {
     setSpeakingMessageId(null);
+    setSpeakingTitle('');
     stop();
   };
 
@@ -115,44 +133,9 @@ export default function App() {
   useEffect(() => {
     if (!isSpeaking) {
       setSpeakingMessageId(null);
+      setSpeakingTitle('');
     }
   }, [isSpeaking]);
-
-  // Requirement 1: Voice Input (Speech-to-Text) with Web Speech API
-  const {
-    isListening,
-    isProcessing: isSpeechProcessing,
-    transcript,
-    interimTranscript,
-    error: speechError,
-    isSupported: isSpeechSupported,
-    startListening,
-    stopListening,
-    resetTranscript,
-  } = useSpeechRecognition({
-    lang: 'en-IN',
-    onResult: (spokenText) => {
-      // Place recognized text into the chat input box automatically
-      setInput(spokenText);
-    },
-    onError: (err) => {
-      console.warn('Speech recognition notice:', err);
-    },
-  });
-
-  const handleToggleVoiceInput = () => {
-    // Stop any active narration so mic doesn't catch the audio
-    if (isSpeaking) {
-      handleStopSpeaking();
-    }
-
-    if (isListening) {
-      stopListening();
-    } else {
-      resetTranscript();
-      startListening('en-IN');
-    }
-  };
 
   // Scroll to bottom when messages update
   const scrollToBottom = () => {
@@ -186,7 +169,6 @@ export default function App() {
   }, []);
 
   const handleSendMessage = async (textToSend?: string, overrideMode?: StoryMode) => {
-    // If voice input is currently listening, stop it
     if (isListening) {
       stopListening();
     }
@@ -238,9 +220,15 @@ export default function App() {
 
       setMessages((prev) => [...prev, assistantMessage]);
 
-      // Requirement 3: Auto-Speak Mode: When enabled, every bot response should be spoken automatically
-      if (autoSpeak) {
-        handleSpeakMessage(assistantMessage.id, assistantMessage.content);
+      // Voice Assistance: Automatically narrate the story or facts if enabled
+      if (autoNarrate && !data.isNotFound) {
+        handleSpeakMessage(
+          assistantMessage.id,
+          assistantMessage.content,
+          `${assistantMessage.monumentName || selectedMonument?.name || 'Monument'} ${
+            currentActiveMode === 'facts' ? 'Facts' : currentActiveMode === 'guide' ? 'Tour' : 'Story'
+          }`
+        );
       }
     } catch (err: any) {
       console.error('Error in chat request:', err);
@@ -416,7 +404,15 @@ export default function App() {
             <ChatMessageView
               key={msg.id}
               message={msg}
-              onSpeak={(text) => handleSpeakMessage(msg.id, text)}
+              onSpeak={(text) =>
+                handleSpeakMessage(
+                  msg.id,
+                  text,
+                  `${msg.monumentName || selectedMonument?.name || 'Monument'} ${
+                    msg.mode === 'facts' ? 'Facts' : msg.mode === 'guide' ? 'Tour' : 'Story'
+                  }`
+                )
+              }
               onStopSpeak={handleStopSpeaking}
               isSpeakingThis={isSpeaking && speakingMessageId === msg.id}
               onSelectMonumentChip={(m) => handleSelectMonument(m)}
@@ -447,21 +443,22 @@ export default function App() {
 
         {/* Input Bar */}
         <div className="sticky bottom-3 z-20 bg-white/95 backdrop-blur-xs border border-amber-200/90 rounded-2xl p-2.5 sm:p-3 shadow-lg">
-          {/* Voice Assistant Status, Accessibility & Auto-Speak Mode Toggle */}
-          <VoiceStatusBar
-            isListening={isListening}
-            isProcessing={isSpeechProcessing}
-            isSpeaking={isSpeaking}
-            autoSpeak={autoSpeak}
-            onToggleAutoSpeak={handleToggleAutoSpeak}
-            speechError={speechError}
-            onDismissError={resetTranscript}
-            isSpeechSupported={isSpeechSupported}
-            onStopSpeaking={handleStopSpeaking}
-            onStopListening={stopListening}
-            interimTranscript={interimTranscript}
-            selectedLanguage="English (India)"
-          />
+          {speechError && (
+            <div className="flex items-center justify-between text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2">
+              <span className="flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-700 flex-shrink-0" />
+                {speechError}
+              </span>
+              <button
+                type="button"
+                onClick={clearSpeechError}
+                className="text-stone-400 hover:text-stone-700 text-xs px-1 cursor-pointer font-bold"
+                aria-label="Dismiss error"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           <form
             onSubmit={(e) => {
@@ -485,43 +482,45 @@ export default function App() {
               onChange={(e) => setInput(e.target.value)}
               placeholder={
                 isListening
-                  ? 'Listening to your voice in English (India)... speak now'
+                  ? 'Listening to your voice (English - India)... speak now'
                   : `Ask Heritage Storyteller about ${selectedMonument?.name || 'monuments'}, e.g. "Tell me the story of Ellora Caves"...`
               }
               disabled={isLoading}
-              className={`flex-1 text-xs sm:text-sm bg-stone-50/80 focus:bg-white border rounded-xl px-3.5 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-amber-700/50 text-stone-900 placeholder:text-stone-400 ${
+              className={`flex-1 text-xs sm:text-sm bg-stone-50/80 focus:bg-white border rounded-xl px-3.5 py-2.5 focus:outline-hidden focus:ring-2 focus:ring-amber-700/50 text-stone-900 placeholder:text-stone-400 transition-colors ${
                 isListening ? 'border-red-400 ring-2 ring-red-300/40 bg-red-50/20' : 'border-stone-200'
               }`}
             />
 
-            {/* Requirement 1 & 4: Microphone button (🎤) with min-h-[44px] min-w-[44px] */}
+            {/* Microphone Button (Speech-to-Text) */}
             <button
               type="button"
               id="voice-microphone-btn"
-              onClick={handleToggleVoiceInput}
+              onClick={() => {
+                if (isSpeaking) {
+                  handleStopSpeaking();
+                }
+                toggleListening();
+              }}
               disabled={isLoading}
-              className={`min-h-[44px] min-w-[44px] px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-all shadow-xs flex-shrink-0 select-none ${
+              className={`min-h-[44px] min-w-[44px] px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-all shadow-2xs flex-shrink-0 cursor-pointer select-none ${
                 isListening
                   ? 'bg-red-600 hover:bg-red-700 text-white ring-4 ring-red-300 animate-pulse'
-                  : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                  : 'bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200'
               }`}
               title={
                 isListening
-                  ? 'Listening... Click to finish voice input'
-                  : 'Voice Input: Speak your monument question (English - India)'
+                  ? 'Listening... Click to finish speaking'
+                  : 'Speak your question with microphone (English - India)'
               }
-              aria-label={isListening ? 'Stop microphone listening' : 'Start voice input (English - India)'}
+              aria-label={isListening ? 'Stop microphone listening' : 'Start voice input with microphone'}
             >
               {isListening ? (
                 <>
-                  <MicOff className="w-4 h-4 text-white animate-bounce" />
-                  <span className="hidden sm:inline font-bold">Listening...</span>
+                  <MicOff className="w-4 h-4 text-white" />
+                  <span className="hidden sm:inline font-bold">Listening</span>
                 </>
               ) : (
-                <>
-                  <Mic className="w-4 h-4 text-amber-800" />
-                  <span className="hidden sm:inline">Voice</span>
-                </>
+                <Mic className="w-4 h-4 text-stone-700" />
               )}
             </button>
 
@@ -530,7 +529,7 @@ export default function App() {
               type="submit"
               id="send-query-btn"
               disabled={isLoading || !input.trim()}
-              className="min-h-[44px] min-w-[44px] bg-amber-800 hover:bg-amber-900 disabled:opacity-40 text-white px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-xs flex-shrink-0"
+              className="min-h-[44px] min-w-[44px] bg-amber-800 hover:bg-amber-900 disabled:opacity-40 text-white px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-xs flex-shrink-0 cursor-pointer"
               aria-label="Send exploration query"
             >
               <span className="hidden xs:inline">Explore</span>
@@ -538,33 +537,66 @@ export default function App() {
             </button>
           </form>
 
-          {/* Quick Voice Suggestions */}
-          <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-amber-100 overflow-x-auto text-[11px]">
-            <span className="text-stone-500 font-medium whitespace-nowrap flex items-center gap-1">
-              <Mic className="w-3 h-3 text-amber-700" />
-              Try saying:
-            </span>
-            <button
-              type="button"
-              onClick={() => handleSendMessage('Tell me the story of Ellora Caves', 'story')}
-              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 transition-colors border border-stone-200 cursor-pointer"
-            >
-              "Tell me the story of Ellora Caves"
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSendMessage('Act as a tourist guide for Taj Mahal', 'guide')}
-              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 transition-colors border border-stone-200 cursor-pointer"
-            >
-              "Act as a tourist guide for Taj Mahal"
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSendMessage('Give me facts about Konark Sun Temple', 'facts')}
-              className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 transition-colors border border-stone-200 cursor-pointer hidden sm:inline-block"
-            >
-              "Give me facts about Konark Sun Temple"
-            </button>
+          {/* Quick Suggestions & Voice Assistant Auto-Narrate Toggle */}
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-2 border-t border-amber-100 text-[11px]">
+            <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+              <span className="text-stone-500 font-medium whitespace-nowrap flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-700" />
+                Quick Explore:
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSendMessage('Tell me the story of Ellora Caves', 'story')}
+                className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 transition-colors border border-stone-200 cursor-pointer"
+              >
+                "Tell me the story of Ellora Caves"
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSendMessage('Act as a tourist guide for Taj Mahal', 'guide')}
+                className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 transition-colors border border-stone-200 cursor-pointer"
+              >
+                "Act as a tourist guide for Taj Mahal"
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSendMessage('Give me facts about Konark Sun Temple', 'facts')}
+                className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 transition-colors border border-stone-200 cursor-pointer hidden sm:inline-block"
+              >
+                "Give me facts about Konark Sun Temple"
+              </button>
+            </div>
+
+            {/* Voice Assistant Auto-Narrate Switch */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button
+                type="button"
+                onClick={handleToggleAutoNarrate}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition-all cursor-pointer shadow-2xs select-none ${
+                  autoNarrate
+                    ? 'bg-amber-100 text-amber-900 border-amber-300 font-semibold ring-1 ring-amber-300/60'
+                    : 'bg-stone-50 hover:bg-stone-100 text-stone-500 border-stone-200 font-medium'
+                }`}
+                title={
+                  autoNarrate
+                    ? 'Voice Assistant is set to automatically narrate answers aloud (Click to turn off)'
+                    : 'Click to enable automatic voice narration for stories and facts'
+                }
+                aria-label="Toggle voice assistant auto narration"
+              >
+                {autoNarrate ? (
+                  <>
+                    <Volume2 className="w-3.5 h-3.5 text-amber-800 animate-pulse" />
+                    <span>Auto-Narrate: ON</span>
+                  </>
+                ) : (
+                  <>
+                    <VolumeX className="w-3.5 h-3.5 text-stone-400" />
+                    <span>Auto-Narrate: OFF</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-1 mt-2 px-1 text-[11px] text-stone-500">
@@ -586,6 +618,7 @@ export default function App() {
         onPause={pause}
         onResume={resume}
         onStop={handleStopSpeaking}
+        currentTitle={speakingTitle}
       />
 
       {/* Knowledge Base Repository Modal */}

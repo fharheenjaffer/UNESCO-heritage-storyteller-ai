@@ -526,22 +526,41 @@ ${knowledgeContext}
         return;
       }
 
-      // Attempt Gemini call with grounded retry
+      // Attempt Gemini call with grounded synthesis fallback with fast timeout
       let replyText = '';
       try {
         const ai = getGenAI();
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: userInstruction,
-          config: {
-            systemInstruction: systemPrompt,
-            temperature: 0.2,
-          },
-        });
-        replyText = response.text || '';
-      } catch (geminiError: any) {
-        console.warn('Gemini API call warning, falling back to grounded knowledge synthesis:', geminiError?.message);
-        replyText = buildGroundedResponse(primaryMonument, effectiveMode, secondaryMonument);
+        const callGeminiWithTimeout = async (model: string, timeoutMs = 2000) => {
+          return Promise.race([
+            ai.models.generateContent({
+              model,
+              contents: userInstruction,
+              config: {
+                systemInstruction: systemPrompt,
+                temperature: 0.2,
+              },
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Timeout waiting for Gemini response')), timeoutMs)
+            ),
+          ]);
+        };
+
+        const candidateModels = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
+        for (const modelCandidate of candidateModels) {
+          try {
+            const response = await callGeminiWithTimeout(modelCandidate, 1800);
+            if (response && response.text && response.text.trim().length > 0) {
+              replyText = response.text;
+              break;
+            }
+          } catch {
+            // Silently try next candidate or proceed to grounded knowledge synthesis
+            continue;
+          }
+        }
+      } catch {
+        // Fallback to grounded knowledge synthesis
       }
 
       if (!replyText || replyText.trim() === '') {
